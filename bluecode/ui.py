@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import shutil
 import time
 from contextlib import suppress
 
@@ -21,6 +22,7 @@ from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.keys import Keys
 from prompt_toolkit.patch_stdout import patch_stdout
 
+from . import art
 from . import config
 from . import presence
 from . import protocol as P
@@ -140,6 +142,7 @@ class App:
         # raw=True: otherwise StdoutProxy escapes our ANSI codes and "?[1m"
         # garbage ends up on screen instead of bold text.
         with patch_stdout(raw=True):
+            self._print_banner()
             print(
                 f"{BOLD}{CYAN}BlueCode{RESET} {DIM}v0.1{RESET}  "
                 f"nick={BOLD}{self.cfg.nick}{RESET}  "
@@ -155,6 +158,13 @@ class App:
                 await rfcomm.set_discoverable_async(False)
                 self.cache.close()
                 print(f"{DIM}bye{RESET}")
+
+    def _print_banner(self) -> None:
+        """Random BlueCode ASCII art, sized to the terminal."""
+        width = shutil.get_terminal_size((80, 24)).columns
+        banner = art.pick(width=width)
+        if banner:
+            print(f"{CYAN}{banner}{RESET}", flush=True)
 
     # --- menu ---------------------------------------------------------
 
