@@ -161,8 +161,9 @@ class App:
 
     def _print_banner(self) -> None:
         """Random BlueCode ASCII art, sized to the terminal."""
-        width = shutil.get_terminal_size((80, 24)).columns
-        banner = art.pick(width=width)
+        size = shutil.get_terminal_size((80, 24))
+        # Leave room for the status line and the menu below the banner.
+        banner = art.pick(width=size.columns, height=max(4, size.lines - 10))
         if banner:
             print(f"{CYAN}{banner}{RESET}", flush=True)
 
