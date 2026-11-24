@@ -73,10 +73,14 @@ async def test_platform_problem_flags_termux(monkeypatch):
 
 async def test_platform_problem_allows_linux(monkeypatch):
     from bluecode.transport import rfcomm
+    import socket
 
     monkeypatch.delenv("PREFIX", raising=False)
     monkeypatch.delenv("ANDROID_ROOT", raising=False)
     monkeypatch.setattr(rfcomm.sys, "platform", "linux")
+    # CI's prebuilt Python may be compiled without BlueZ headers, so do not
+    # depend on the host build here.
+    monkeypatch.setattr(socket, "AF_BLUETOOTH", 31, raising=False)
     assert rfcomm.platform_problem() is None
 
 
@@ -87,6 +91,17 @@ async def test_platform_problem_rejects_macos(monkeypatch):
     monkeypatch.delenv("ANDROID_ROOT", raising=False)
     monkeypatch.setattr(rfcomm.sys, "platform", "darwin")
     assert "not supported" in rfcomm.platform_problem()
+
+
+async def test_platform_problem_reports_missing_af_bluetooth(monkeypatch):
+    from bluecode.transport import rfcomm
+    import socket
+
+    monkeypatch.delenv("PREFIX", raising=False)
+    monkeypatch.delenv("ANDROID_ROOT", raising=False)
+    monkeypatch.setattr(rfcomm.sys, "platform", "linux")
+    monkeypatch.delattr(socket, "AF_BLUETOOTH", raising=False)
+    assert "no AF_BLUETOOTH" in rfcomm.platform_problem()
 
 
 # --- protocol -------------------------------------------------------------
