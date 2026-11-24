@@ -17,24 +17,58 @@ me = player228
 
 ## Установка
 
-На старте `bluecode` печатает случайный ASCII-баннер (один из трёх) и
-подстраивает его под ширину терминала. Отключить: `BLUECODE_NO_ART=1`.
+На старте `bluecode` печатает случайный ASCII-баннер (один из восьми) и
+подстраивает его под ширину и высоту терминала. Отключить: `BLUECODE_NO_ART=1`.
+
+### Ubuntu с нуля
 
 ```bash
+sudo apt update
+sudo apt install -y git python3 python3-venv bluez
+git clone https://github.com/JustAWall/BlueCode.git
 cd BlueCode
-make install       # venv + зависиости + команда bluecode в ~/.local/bin
-```
-
-После этого из любого каталога:
-
-```bash
+make install
 bluecode
 ```
 
-Лаунчер сам создаст `.venv`, если его нет. Нужен работающий BlueZ и
-Bluetooth-адаптер; `bluecode` поднимет сервис/адаптер сам, если сможет.
-Python ≥ 3.11; RFCOMM берётся из стандартной библиотеки (`AF_BLUETOOTH`),
-поэтому PyBluez не нужен.
+Если `make` нет — то же самое вручную:
+
+```bash
+python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'
+```
+
+### Первое соединение: обмен MAC-адресами
+
+`showonline` опирается на кэш и скан, и при первой встрече список может быть
+пустым — устройства ещё друг друга не знают. Самый надёжный путь:
+
+```bash
+bluetoothctl show | grep Controller    # свой MAC
+```
+
+На **обеих** машинах спарить и довериться:
+
+```bash
+bluetoothctl pair AA:BB:CC:DD:EE:FF    # MAC собеседника
+bluetoothctl trust AA:BB:CC:DD:EE:FF
+```
+
+Затем в любом BlueCode:
+
+```
+> chat AA:BB:CC:DD:EE:FF
+```
+
+Второй видит `... want to talk with you. Accept? [y/n] (y):`, жмёт Enter —
+чат открыт. `chat <номер>` из `showonline` работает так же, но только после
+взаимного обнаружения.
+
+> Канал должен совпадать на обеих сторонах — `mysettings` → `channel`,
+> по умолчанию 3.
+
+Нужен работающий BlueZ и Bluetooth-адаптер; `bluecode` поднимет
+сервис/адаптер сам, если сможет. Python ≥ 3.11; RFCOMM берётся из
+стандартной библиотеки (`AF_BLUETOOTH`), поэтому PyBluez не нужен.
 
 ## Запуск без Wi-Fi
 
@@ -121,7 +155,7 @@ bluetoothctl
 bluecode        # запускает листенер и включает discoverable
 ```
 
-`1` → список онлайн → `chat N`.
+`1` → список онлайн → `chat N`, либо сразу `chat <MAC>`.
 
 **Канал должен совпадать** на обеих сторонах (`mysettings` → `channel <1-30>`,
 потом перезапуск). Канал 3 обычно свободен; если занят — возьми другой.

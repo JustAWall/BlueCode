@@ -151,3 +151,6 @@ def _is_mac(value: str) -> bool:
     return len(parts) == 6 and all(
         len(p) == 2 and all(c in "0123456789abcdefABCDEF" for c in p) for p in parts
     )
+
+
+is_mac = _is_mac

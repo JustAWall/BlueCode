@@ -264,14 +264,25 @@ class App:
     async def _chat_command(self, cmd: str) -> None:
         parts = cmd.split()
         if len(parts) != 2:
-            print(f"{DIM}usage: chat <number>{RESET}")
+            print(f"{DIM}usage: chat <number>   or   chat <AA:BB:CC:DD:EE:FF>{RESET}")
             return
+        target = parts[1]
+
+        # Direct-by-MAC: the reliable path for a first meeting, when nobody
+        # is in the cached/scan list yet.
+        if config.is_mac(target):
+            mac = target.upper()
+            label = self.cache.nick_of(mac) or mac
+            print(f"{DIM}inviting {label}...{RESET}")
+            await self._open(mac, label)
+            return
+
         if not self.online:
             await self._show_online()
         try:
-            idx = int(parts[1])
+            idx = int(target)
         except ValueError:
-            print(f"{DIM}chat needs a number, e.g. chat 4{RESET}")
+            print(f"{DIM}chat needs a number or MAC, e.g. chat 4 / chat AA:BB:CC:DD:EE:FF{RESET}")
             return
         if idx == 0:
             return
@@ -280,10 +291,13 @@ class App:
             return
         peer = self.online[idx - 1]
         print(f"{DIM}inviting {peer.label}...{RESET}")
+        await self._open(peer.mac, peer.label)
+
+    async def _open(self, mac: str, label: str) -> None:
         try:
-            chat = await self.hub.open_chat(peer.mac, peer.label)
+            chat = await self.hub.open_chat(mac, label)
         except ChatError as exc:
-            print(f"{RED}{peer.label}: {exc}{RESET}")
+            print(f"{RED}{label}: {exc}{RESET}")
             return
         await self._enter_chat(chat)
 

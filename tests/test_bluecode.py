@@ -443,3 +443,41 @@ def test_error_texts_are_actionable():
     assert "busy" in _refusal_text("busy")
     assert "try again" in _refusal_text("collision")
     assert "answer" in _refusal_text("timeout")
+
+
+# --- chat by MAC ----------------------------------------------------------
+
+
+async def test_chat_by_mac_resolves_without_scanning(tmp_path):
+    import bluecode.ui as ui
+
+    app = ui.App.__new__(ui.App)
+    app.cache = config.PeerCache(tmp_path / "m.db")
+    app.online = []
+    calls = []
+
+    async def fake_open(mac, label):
+        calls.append((mac, label))
+
+    app._open = fake_open
+    await app._chat_command("chat aa:bb:cc:dd:ee:ff")
+    assert calls == [("AA:BB:CC:DD:EE:FF", "AA:BB:CC:DD:EE:FF")]
+    app.cache.close()
+
+
+async def test_chat_by_mac_uses_cached_nick(tmp_path):
+    import bluecode.ui as ui
+
+    app = ui.App.__new__(ui.App)
+    app.cache = config.PeerCache(tmp_path / "n.db")
+    app.cache.remember("AA:BB:CC:DD:EE:FF", "bob")
+    app.online = []
+    calls = []
+
+    async def fake_open(mac, label):
+        calls.append((mac, label))
+
+    app._open = fake_open
+    await app._chat_command("chat AA:BB:CC:DD:EE:FF")
+    assert calls == [("AA:BB:CC:DD:EE:FF", "bob")]
+    app.cache.close()
