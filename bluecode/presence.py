@@ -72,11 +72,11 @@ async def find_online(
     candidates: set[str] = set(cache.all())
 
     if scan:
-        before = {mac for mac, _ in await asyncio.to_thread(config.known_devices)}
-        await asyncio.to_thread(config.discover, scan_seconds)
-        after = {mac for mac, _ in await asyncio.to_thread(config.known_devices)}
-        candidates.update(after - before)
-        candidates.update(after)
+        # discover() returns only devices that answered in this window, so we
+        # do not waste time probing every headset BlueZ remembers.
+        seen_now = await asyncio.to_thread(config.discover, scan_seconds)
+        candidates.update(seen_now)
+        candidates.update(mac for mac, _ in await asyncio.to_thread(config.known_devices))
 
     own = set(await asyncio.to_thread(rfcomm.own_macs))
     candidates = {mac.upper() for mac in candidates if mac} - own

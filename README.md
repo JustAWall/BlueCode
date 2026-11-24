@@ -37,31 +37,33 @@ bluecode
 python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'
 ```
 
-### Первое соединение: обмен MAC-адресами
+### Первое соединение
 
-`showonline` опирается на кэш и скан, и при первой встрече список может быть
-пустым — устройства ещё друг друга не знают. Самый надёжный путь:
-
-```bash
-bluetoothctl show | grep Controller    # свой MAC
-```
-
-На **обеих** машинах спарить и довериться:
-
-```bash
-bluetoothctl pair AA:BB:CC:DD:EE:FF    # MAC собеседника
-bluetoothctl trust AA:BB:CC:DD:EE:FF
-```
-
-Затем в любом BlueCode:
+MAC-адреса не нужны. Нажми `1` — BlueCode просканирует эфир и покажет **ники**:
 
 ```
-> chat AA:BB:CC:DD:EE:FF
+me = printer
+  0 - B4ck at menu
+  1 - BlueCodeUser1
+  2 - BlueCodeUser2
 ```
 
-Второй видит `... want to talk with you. Accept? [y/n] (y):`, жмёт Enter —
-чат открыт. `chat <номер>` из `showonline` работает так же, но только после
-взаимного обнаружения.
+Дальше `chat 2`. Второй видит `... want to talk with you. Accept? [y/n] (y):`,
+жмёт Enter — чат открыт.
+
+Список — это только Bluetooth **Classic** устройства (BR/EDR), поэтому
+BLE-шумиха от телефонов и часов туда не попадает. Из найденных BlueCode
+пробует по очереди, кто ответит `hello` — остальные молча отбрасываются.
+
+> **Единственный ручной шаг — pairing, один раз на пару устройств.**
+> Android/Windows требуют подтверждения, Linux с BlueZ часто делает это
+> сам. При `chat N` BlueCode спарит автоматически, если ещё не спарено.
+> Если нужно вручную:
+> ```bash
+> bluetoothctl pair AA:BB:CC:DD:EE:FF   # MAC собеседника
+> bluetoothctl trust AA:BB:CC:DD:EE:FF
+> ```
+> MAC собеседника не нужно никуда пересылать: он приходит из скана.
 
 > Канал должен совпадать на обеих сторонах — `mysettings` → `channel`,
 > по умолчанию 3.

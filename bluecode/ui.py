@@ -44,6 +44,7 @@ def _supports_color() -> bool:
 
 _COLOR = _supports_color()
 RESET = "\x1b[0m" if _COLOR else ""
+SCAN_SECONDS = 8
 DIM = "\x1b[2m" if _COLOR else ""
 BOLD = "\x1b[1m" if _COLOR else ""
 CYAN = "\x1b[36m" if _COLOR else ""
@@ -237,19 +238,27 @@ class App:
             channel=self.hub.channel,
             cache=self.cache,
         )
+        if self.online:
+            self._print_online()
+            return
+
+        # Nobody known yet (or all offline): scan for nearby BlueCode users.
+        # This is the normal path for a first meeting -- no MAC exchange.
+        print(f"{DIM}nobody known; scanning {SCAN_SECONDS}s for nearby devices...{RESET}")
+        self.online = await presence.find_online(
+            nick=self.cfg.nick,
+            dev=self.dev,
+            channel=self.hub.channel,
+            cache=self.cache,
+            scan=True,
+            scan_seconds=SCAN_SECONDS,
+        )
         self._print_online()
         if not self.online:
-            ans = await self._ask(f"{DIM}scan for new devices? [y/N]: {RESET}")
-            if ans and ans.lower().startswith("y"):
-                print(f"{DIM}scanning {8}s...{RESET}")
-                self.online = await presence.find_online(
-                    nick=self.cfg.nick,
-                    dev=self.dev,
-                    channel=self.hub.channel,
-                    cache=self.cache,
-                    scan=True,
-                )
-                self._print_online()
+            print(
+                f"{DIM}hint: the other side must run bluecode and be paired "
+                f"once (bluetoothctl pair <MAC>){RESET}"
+            )
 
     def _print_online(self) -> None:
         print()
@@ -294,6 +303,15 @@ class App:
         await self._open(peer.mac, peer.label)
 
     async def _open(self, mac: str, label: str) -> None:
+        # RFCOMM needs a link key. If the device is not paired yet, do it
+        # here so the user never has to touch bluetoothctl.
+        if not await asyncio.to_thread(config.is_paired, mac):
+            print(f"{DIM}pairing with {label}...{RESET}")
+            problem = await asyncio.to_thread(config.pair, mac)
+            if problem:
+                print(f"{RED}{label}: {problem}{RESET}")
+                return
+            print(f"{GREEN}paired with {label}{RESET}")
         try:
             chat = await self.hub.open_chat(mac, label)
         except ChatError as exc:

@@ -133,17 +133,87 @@ def known_devices() -> list[tuple[str, str]]:
     return devices
 
 
-def discover(seconds: int = 8) -> None:
-    """Actively scan for nearby devices (blocking)."""
+def discover(seconds: int = 8) -> set[str]:
+    """Actively scan and return the MACs that actually answered (blocking).
+
+    Parsing the scan output matters: `bluetoothctl devices` lists everything
+    BlueZ has ever seen (headphones, old phones, ...). Probing that whole set
+    is both slow and pointless, so we only keep devices seen in this window.
+
+    We scan BR/EDR only: BlueCode speaks Bluetooth Classic, so BLE beacons
+    (hundreds of phones and watches) would just add noise.
+    """
+    seen: set[str] = set()
+    out = ""
+    for args in (["scan", "bredr"], ["scan", "on"]):
+        try:
+            out = subprocess.run(
+                ["bluetoothctl", "--timeout", str(seconds), *args],
+                capture_output=True,
+                text=True,
+                timeout=seconds + 5,
+            ).stdout
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if "Device" in out:
+            break
+    for line in out.splitlines():
+        parts = line.replace("\x1b", "").split()
+        # Only devices present right now: [DEL] means it left the area.
+        if parts and parts[0].startswith("[DEL]"):
+            continue
+        for i, token in enumerate(parts[:-1]):
+            if token == "Device" and _is_mac(parts[i + 1]):
+                seen.add(parts[i + 1].upper())
+                break
+    return seen
+
+
+def is_paired(mac: str) -> bool:
+    """True if BlueZ already has a link key for this device."""
     try:
-        subprocess.run(
-            ["bluetoothctl", "--timeout", str(seconds), "scan", "on"],
+        out = subprocess.run(
+            ["bluetoothctl", "info", mac.upper()],
             capture_output=True,
             text=True,
-            timeout=seconds + 5,
-        )
+            timeout=5,
+        ).stdout
     except (OSError, subprocess.SubprocessError):
-        pass
+        return False
+    return any(
+        line.strip() == "Paired: yes" for line in out.replace("\x1b", "").splitlines()
+    )
+
+
+def pair(mac: str, timeout: float = 40.0) -> str | None:
+    """Pair + trust a device. Returns None on success, else an error text.
+
+    BlueZ may show a passkey confirmation; on a desktop with an agent this is
+    usually automatic (Just Works) for BlueCode-to-BlueCode on Linux.
+    """
+    mac = mac.upper()
+    try:
+        proc = subprocess.run(
+            ["bluetoothctl", "pair", mac],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            input="yes\n",
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return f"pairing failed: {exc}"
+    text = (proc.stdout + proc.stderr).replace("\x1b", "")
+    if proc.returncode != 0 or "Pairing successful" not in text:
+        if "AlreadyExists" in text or "already paired" in text.lower():
+            pass
+        elif "AuthenticationFailed" in text or "Failed to pair" in text:
+            return "pairing rejected (check both screens for a passkey)"
+        else:
+            return "pairing failed (is the other device discoverable?)"
+    subprocess.run(
+        ["bluetoothctl", "trust", mac], capture_output=True, text=True, timeout=10
+    )
+    return None
 
 
 def _is_mac(value: str) -> bool:

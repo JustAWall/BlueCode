@@ -17,7 +17,6 @@ from typing import Any
 PROTO_VERSION = 1
 MAX_FRAME = 64 * 1024
 
-
 class ProtocolError(Exception):
     """Peer sent something we cannot parse."""
 

@@ -481,3 +481,99 @@ async def test_chat_by_mac_uses_cached_nick(tmp_path):
     await app._chat_command("chat AA:BB:CC:DD:EE:FF")
     assert calls == [("AA:BB:CC:DD:EE:FF", "bob")]
     app.cache.close()
+
+
+# --- scanning / pairing helpers ------------------------------------------
+
+
+def test_discover_only_returns_devices_seen_in_this_scan(monkeypatch):
+    """`bluetoothctl devices` lists everything ever seen; scan output is the
+    truthful 'nearby right now' set. Probing the former is slow and wrong."""
+    import subprocess
+
+    fake = (
+        "[NEW] Device AA:BB:CC:DD:EE:01 Foo\n"
+        "\x1b[0;92m[NEW]\x1b[0m Device AA:BB:CC:DD:EE:02 Bar\n"
+        "[CHG] Device AA:BB:CC:DD:EE:03 RSSI: -60\n"
+        "[DEL] Device AA:BB:CC:DD:EE:04 Gone\n"
+    )
+
+    class R:
+        stdout = fake
+
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: R())
+    assert config.discover(1) == {
+        "AA:BB:CC:DD:EE:01",
+        "AA:BB:CC:DD:EE:02",
+        "AA:BB:CC:DD:EE:03",
+    }
+
+
+def test_discover_survives_missing_bluetoothctl(monkeypatch):
+    import subprocess
+
+    def boom(*a, **k):
+        raise OSError("no bluetoothctl")
+
+    monkeypatch.setattr(subprocess, "run", boom)
+    assert config.discover(1) == set()
+
+
+def test_is_paired_reads_bluetoothctl_info(monkeypatch):
+    import subprocess
+
+    class Paired:
+        stdout = "Device AA:BB:CC:DD:EE:01\n\tPaired: yes\n\tTrusted: yes\n"
+
+    class NotPaired:
+        stdout = "Device AA:BB:CC:DD:EE:01\n\tPaired: no\n"
+
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: Paired())
+    assert config.is_paired("AA:BB:CC:DD:EE:01") is True
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: NotPaired())
+    assert config.is_paired("AA:BB:CC:DD:EE:01") is False
+
+
+def test_pair_reports_success_and_trusts(monkeypatch):
+    import subprocess
+
+    calls = []
+
+    class Ok:
+        returncode = 0
+        stdout = "Pairing successful\n"
+        stderr = ""
+
+    def fake(cmd, *a, **k):
+        calls.append(cmd)
+        return Ok()
+
+    monkeypatch.setattr(subprocess, "run", fake)
+    assert config.pair("aa:bb:cc:dd:ee:01") is None
+    assert ["bluetoothctl", "pair", "AA:BB:CC:DD:EE:01"] in calls
+    assert ["bluetoothctl", "trust", "AA:BB:CC:DD:EE:01"] in calls
+
+
+def test_pair_reports_failure(monkeypatch):
+    import subprocess
+
+    class Bad:
+        returncode = 1
+        stdout = "Failed to pair: AuthenticationFailed\n"
+        stderr = ""
+
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: Bad())
+    err = config.pair("AA:BB:CC:DD:EE:01")
+    assert err and "passkey" in err
+
+
+def test_pair_accepts_already_paired(monkeypatch):
+    import subprocess
+
+    class Already:
+        returncode = 1
+        stdout = "Device AA:BB:CC:DD:EE:01 AlreadyExists\n"
+        stderr = ""
+
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: Already())
+    assert config.pair("AA:BB:CC:DD:EE:01") is None
