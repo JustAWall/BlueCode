@@ -128,9 +128,20 @@ def _run(cmd: list[str], timeout: float = 5.0) -> bool:
 
 
 def set_discoverable(on: bool) -> None:
-    """Best-effort: make this adapter visible to other BlueCode users."""
-    for cmd in (["power", "on"], ["pairable", "on"], ["discoverable", "on" if on else "off"]):
-        _run(["bluetoothctl", *cmd])
+    """Best-effort: make this adapter visible to other BlueCode users.
+
+    BlueZ defaults to DiscoverableTimeout=180, i.e. it silently turns
+    discoverability off after three minutes and nobody can find us anymore.
+    Set 0 (forever) while running and restore 180 on exit.
+    """
+    if on:
+        _run(["bluetoothctl", "power", "on"])
+        _run(["bluetoothctl", "pairable", "on"])
+        _run(["bluetoothctl", "discoverable-timeout", "0"])
+        _run(["bluetoothctl", "discoverable", "on"])
+        return
+    _run(["bluetoothctl", "discoverable", "off"])
+    _run(["bluetoothctl", "discoverable-timeout", "180"])
 
 
 def ensure_adapter(timeout: float = 6.0) -> str | None:

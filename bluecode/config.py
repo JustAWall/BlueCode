@@ -185,35 +185,92 @@ def is_paired(mac: str) -> bool:
     )
 
 
-def pair(mac: str, timeout: float = 40.0) -> str | None:
-    """Pair + trust a device. Returns None on success, else an error text.
-
-    BlueZ may show a passkey confirmation; on a desktop with an agent this is
-    usually automatic (Just Works) for BlueCode-to-BlueCode on Linux.
-    """
-    mac = mac.upper()
+def is_known(mac: str) -> bool:
+    """True if BlueZ has any record of this device (seen at least once)."""
     try:
-        proc = subprocess.run(
-            ["bluetoothctl", "pair", mac],
+        out = subprocess.run(
+            ["bluetoothctl", "info", mac.upper()],
             capture_output=True,
             text=True,
-            timeout=timeout,
+            timeout=5,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return False
+    text = out.replace("\x1b", "")
+    # Unknown devices produce "Device XX:... not available".
+    return "Device " in text and "not available" not in text
+
+
+def ensure_known(mac: str, seconds: int = 12) -> bool:
+    """Scan until BlueZ knows `mac`, so `pair` does not fail with 'not available'.
+
+    `bluetoothctl pair` refuses MACs it has never seen, which is the usual
+    reason a first-time pairing fails even though the device is right there.
+    """
+    mac = mac.upper()
+    if is_known(mac):
+        return True
+    return mac in discover(seconds)
+
+
+def pair(mac: str, timeout: float = 45.0) -> str | None:
+    """Pair + trust a device. Returns None on success, else an error text.
+
+    Handles the three real-world failure modes we observed with BlueZ 5.87:
+    the device being unknown to BlueZ, `pairable` having been reset, and no
+    agent being registered in non-interactive mode.
+    """
+    mac = mac.upper()
+    if is_paired(mac):
+        _trust(mac)
+        return None
+
+    # Pairable can be reset by a previous failed attempt; set it every time.
+    _run_bt(["pairable", "on"])
+
+    if not ensure_known(mac):
+        return (
+            "device not found nearby. Turn Bluetooth on there, make it "
+            "discoverable, and keep both machines within a few meters"
+        )
+
+    try:
+        proc = subprocess.run(
+            ["bluetoothctl", "--timeout", str(int(timeout)), "--agent",
+             "NoInputNoOutput", "pair", mac],
+            capture_output=True,
+            text=True,
+            timeout=timeout + 10,
             input="yes\n",
         )
     except (OSError, subprocess.SubprocessError) as exc:
         return f"pairing failed: {exc}"
+
     text = (proc.stdout + proc.stderr).replace("\x1b", "")
-    if proc.returncode != 0 or "Pairing successful" not in text:
-        if "AlreadyExists" in text or "already paired" in text.lower():
-            pass
-        elif "AuthenticationFailed" in text or "Failed to pair" in text:
-            return "pairing rejected (check both screens for a passkey)"
-        else:
-            return "pairing failed (is the other device discoverable?)"
-    subprocess.run(
-        ["bluetoothctl", "trust", mac], capture_output=True, text=True, timeout=10
-    )
-    return None
+    if "Pairing successful" in text or "AlreadyExists" in text or "already paired" in text.lower():
+        _trust(mac)
+        return None
+    if "AuthenticationFailed" in text or "Rejected" in text or "rejected" in text:
+        return "pairing rejected: confirm the request on the other device"
+    if "ConnectionAttemptFailed" in text or "not available" in text:
+        return "could not connect: device is off, out of range, or already busy"
+    if "InProgress" in text:
+        return "pairing already in progress, wait a few seconds and retry"
+    return "pairing failed; try `bluetoothctl pair " + mac + "` manually"
+
+
+def _trust(mac: str) -> None:
+    _run_bt(["trust", mac])
+
+
+def _run_bt(args: list[str], timeout: float = 10.0) -> bool:
+    try:
+        proc = subprocess.run(
+            ["bluetoothctl", *args], capture_output=True, text=True, timeout=timeout
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return proc.returncode == 0
 
 
 def _is_mac(value: str) -> bool:

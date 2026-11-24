@@ -534,46 +534,127 @@ def test_is_paired_reads_bluetoothctl_info(monkeypatch):
     assert config.is_paired("AA:BB:CC:DD:EE:01") is False
 
 
-def test_pair_reports_success_and_trusts(monkeypatch):
+def _bt_stub(monkeypatch, responses):
+    """Fake subprocess.run dispatching on the bluetoothctl subcommand.
+
+    responses: dict subcommand -> (returncode, stdout). Anything unlisted
+    returns success with empty output.
+    """
     import subprocess
 
     calls = []
 
-    class Ok:
-        returncode = 0
-        stdout = "Pairing successful\n"
-        stderr = ""
+    class R:
+        def __init__(self, code, out):
+            self.returncode = code
+            self.stdout = out
+            self.stderr = ""
 
     def fake(cmd, *a, **k):
         calls.append(cmd)
-        return Ok()
+        # Skip global options ("--timeout N", "--agent X") to find the command.
+        toks = cmd[1:]
+        sub = ""
+        i = 0
+        while i < len(toks):
+            tok = toks[i]
+            if tok.startswith("--"):
+                i += 2  # option plus its value
+                continue
+            sub = tok
+            break
+        code, out = responses.get(sub, (0, ""))
+        return R(code, out)
 
     monkeypatch.setattr(subprocess, "run", fake)
+    return calls
+
+
+def test_pair_happy_path_trusts(monkeypatch):
+    calls = _bt_stub(
+        monkeypatch,
+        {
+            "info": (0, "Device AA:BB:CC:DD:EE:01\n\tPaired: no\n"),
+            "pair": (0, "Pairing successful\n"),
+        },
+    )
     assert config.pair("aa:bb:cc:dd:ee:01") is None
-    assert ["bluetoothctl", "pair", "AA:BB:CC:DD:EE:01"] in calls
-    assert ["bluetoothctl", "trust", "AA:BB:CC:DD:EE:01"] in calls
+    flat = [" ".join(c) for c in calls]
+    assert any("pairable on" in c for c in flat)
+    assert any(c.endswith("pair AA:BB:CC:DD:EE:01") for c in flat)
+    assert any(c.endswith("trust AA:BB:CC:DD:EE:01") for c in flat)
+    # Just Works agent must be passed, or non-interactive pairing fails.
+    assert any("--agent NoInputNoOutput" in c for c in flat)
 
 
-def test_pair_reports_failure(monkeypatch):
-    import subprocess
-
-    class Bad:
-        returncode = 1
-        stdout = "Failed to pair: AuthenticationFailed\n"
-        stderr = ""
-
-    monkeypatch.setattr(subprocess, "run", lambda *a, **k: Bad())
+def test_pair_reports_authentication_failure(monkeypatch):
+    _bt_stub(
+        monkeypatch,
+        {
+            "info": (0, "Device AA:BB:CC:DD:EE:01\n\tPaired: no\n"),
+            "pair": (1, "Failed to pair: org.bluez.Error.AuthenticationFailed\n"),
+        },
+    )
     err = config.pair("AA:BB:CC:DD:EE:01")
-    assert err and "passkey" in err
+    assert err and "confirm" in err
+
+
+def test_pair_reports_connection_failure(monkeypatch):
+    _bt_stub(
+        monkeypatch,
+        {
+            "info": (0, "Device AA:BB:CC:DD:EE:01\n\tPaired: no\n"),
+            "pair": (1, "Failed to pair: org.bluez.Error.ConnectionAttemptFailed\n"),
+        },
+    )
+    err = config.pair("AA:BB:CC:DD:EE:01")
+    assert err and "off, out of range" in err
 
 
 def test_pair_accepts_already_paired(monkeypatch):
-    import subprocess
-
-    class Already:
-        returncode = 1
-        stdout = "Device AA:BB:CC:DD:EE:01 AlreadyExists\n"
-        stderr = ""
-
-    monkeypatch.setattr(subprocess, "run", lambda *a, **k: Already())
+    calls = _bt_stub(
+        monkeypatch,
+        {"info": (0, "Device AA:BB:CC:DD:EE:01\n\tPaired: yes\n")},
+    )
     assert config.pair("AA:BB:CC:DD:EE:01") is None
+    # Already paired: no pairing attempt, but still make it trusted.
+    assert not any("pair" in " ".join(c) and "pairable" not in " ".join(c) for c in calls)
+    assert any(" ".join(c).endswith("trust AA:BB:CC:DD:EE:01") for c in calls)
+
+
+def test_pair_scans_when_device_unknown(monkeypatch):
+    calls = _bt_stub(
+        monkeypatch,
+        {
+            "info": (0, "Device AA:BB:CC:DD:EE:99 not available\n"),
+            "pair": (0, "Pairing successful\n"),
+        },
+    )
+    seen = []
+
+    def fake_discover(seconds=8):
+        seen.append(seconds)
+        return {"AA:BB:CC:DD:EE:01"}
+
+    monkeypatch.setattr(config, "discover", fake_discover)
+    assert config.pair("AA:BB:CC:DD:EE:01") is None
+    assert seen, "pair() must scan before pairing an unknown device"
+    assert any(" ".join(c).endswith("pair AA:BB:CC:DD:EE:01") for c in calls)
+
+
+def test_pair_fails_clearly_when_device_never_appears(monkeypatch):
+    _bt_stub(
+        monkeypatch,
+        {"info": (0, "Device AA:BB:CC:DD:EE:99 not available\n")},
+    )
+    monkeypatch.setattr(config, "discover", lambda seconds=8: set())
+    err = config.pair("AA:BB:CC:DD:EE:01")
+    assert err and "not found nearby" in err
+
+
+def test_ensure_known_skips_scan_when_known(monkeypatch):
+    monkeypatch.setattr(config, "is_known", lambda mac: True)
+    monkeypatch.setattr(
+        config, "discover", lambda seconds=8: (_ for _ in ()).throw(AssertionError)
+    )
+    assert config.ensure_known("AA:BB:CC:DD:EE:01") is True

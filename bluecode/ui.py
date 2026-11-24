@@ -307,6 +307,10 @@ class App:
         # here so the user never has to touch bluetoothctl.
         if not await asyncio.to_thread(config.is_paired, mac):
             print(f"{DIM}pairing with {label}...{RESET}")
+            print(
+                f"{DIM}if a code or prompt appears there, confirm it on both "
+                f"devices{RESET}"
+            )
             problem = await asyncio.to_thread(config.pair, mac)
             if problem:
                 print(f"{RED}{label}: {problem}{RESET}")
